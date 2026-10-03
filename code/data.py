@@ -26,7 +26,26 @@ def load_split(processed_dir: str = "data/processed"):
       2. np.load(f"{processed_dir}/eval.npz")  -> khoá "X", "y", "row_id"
       3. assert shape/dtype đúng quy ước ở đầu file
     """
-    raise NotImplementedError  # TODO
+    train_data = np.load(f"{processed_dir}/train.npz")
+    X_train_full = train_data["X"]
+    y_train_full = train_data["y"]
+    
+    eval_data = np.load(f"{processed_dir}/eval.npz")
+    X_eval = eval_data["X"]
+    y_eval = eval_data["y"]
+    eval_row_id = eval_data["row_id"]
+    
+    assert X_train_full.dtype == np.float32, "X_train_full must be float32"
+    assert X_train_full.shape[1] == 54, "X_train_full must have 54 columns"
+    assert y_train_full.dtype == np.int64, "y_train_full must be int64"
+    assert len(X_train_full) == len(y_train_full), "X and y size mismatch"
+    
+    assert X_eval.dtype == np.float32, "X_eval must be float32"
+    assert X_eval.shape[1] == 54, "X_eval must have 54 columns"
+    assert y_eval.dtype == np.int64, "y_eval must be int64"
+    assert len(X_eval) == len(y_eval) == len(eval_row_id), "X, y, row_id size mismatch"
+    
+    return X_train_full, y_train_full, X_eval, y_eval, eval_row_id
 
 
 def make_val_split(X, y, val_fraction: float = 0.2, seed: int = 42):
@@ -36,7 +55,9 @@ def make_val_split(X, y, val_fraction: float = 0.2, seed: int = 42):
     Gợi ý: sklearn.model_selection.train_test_split(..., stratify=y, random_state=seed)
     Dùng CÙNG seed và val_fraction cho mọi thí nghiệm để so sánh công bằng.
     """
-    raise NotImplementedError  # TODO
+    from sklearn.model_selection import train_test_split
+    X_tr, X_val, y_tr, y_val = train_test_split(X, y, test_size=val_fraction, stratify=y, random_state=seed)
+    return X_tr, y_tr, X_val, y_val
 
 
 def fit_standardizer(X_tr):
@@ -45,7 +66,10 @@ def fit_standardizer(X_tr):
     Trả về: mean (shape (10,)), std (shape (10,))
     Câu hỏi: vì sao không được tính trên toàn bộ dữ liệu hay trên eval?
     """
-    raise NotImplementedError  # TODO
+    X_tr_numeric = X_tr[:, :N_NUMERIC]
+    mean = np.mean(X_tr_numeric, axis=0)
+    std = np.std(X_tr_numeric, axis=0)
+    return mean, std
 
 
 def apply_standardizer(X, mean, std):
@@ -53,7 +77,10 @@ def apply_standardizer(X, mean, std):
 
     Chú ý: không sửa X tại chỗ nếu bạn còn dùng lại nó; chú ý std = 0 (nếu có).
     """
-    raise NotImplementedError  # TODO
+    X_out = X.copy()
+    std_safe = np.where(std == 0, 1.0, std)
+    X_out[:, :N_NUMERIC] = (X_out[:, :N_NUMERIC] - mean) / std_safe
+    return X_out
 
 
 def prepare_data(device: str, val_fraction: float = 0.2, seed: int = 42,
@@ -69,7 +96,38 @@ def prepare_data(device: str, val_fraction: float = 0.2, seed: int = 42,
       3. torch.tensor(..., device=device); X là float32, y là int64
       4. in ra kích thước các tập và accuracy của chiến lược "luôn đoán lớp đa số" trên val
     """
-    raise NotImplementedError  # TODO
+    X_train_full, y_train_full, X_eval, y_eval, eval_row_id = load_split(processed_dir)
+    X_tr, y_tr, X_val, y_val = make_val_split(X_train_full, y_train_full, val_fraction, seed)
+    
+    mean, std = fit_standardizer(X_tr)
+    X_tr = apply_standardizer(X_tr, mean, std)
+    X_val = apply_standardizer(X_val, mean, std)
+    X_eval = apply_standardizer(X_eval, mean, std)
+    
+    d_X_tr = torch.tensor(X_tr, dtype=torch.float32, device=device)
+    d_y_tr = torch.tensor(y_tr, dtype=torch.int64, device=device)
+    d_X_val = torch.tensor(X_val, dtype=torch.float32, device=device)
+    d_y_val = torch.tensor(y_val, dtype=torch.int64, device=device)
+    d_X_eval = torch.tensor(X_eval, dtype=torch.float32, device=device)
+    d_y_eval = torch.tensor(y_eval, dtype=torch.int64, device=device)
+    
+    print(f"Train size: {len(X_tr)}")
+    print(f"Val size: {len(X_val)}")
+    print(f"Eval size: {len(X_eval)}")
+    
+    unique, counts = np.unique(y_val, return_counts=True)
+    majority_count = np.max(counts)
+    print(f"Majority guess val accuracy: {majority_count / len(y_val):.4f}")
+    
+    return {
+        "X_tr": d_X_tr,
+        "y_tr": d_y_tr,
+        "X_val": d_X_val,
+        "y_val": d_y_val,
+        "X_eval": d_X_eval,
+        "y_eval": d_y_eval,
+        "eval_row_id": eval_row_id
+    }
 
 
 def iterate_batches(X, y, batch_size: int, generator: torch.Generator | None = None, shuffle: bool = True):
@@ -80,4 +138,12 @@ def iterate_batches(X, y, batch_size: int, generator: torch.Generator | None = N
       2. for i in range(0, N, batch_size): idx = perm[i:i+batch_size]; yield X[idx], y[idx]
     Chú ý: batch cuối có thể nhỏ hơn batch_size; hãy quyết định bạn xử lý thế nào và ghi lại.
     """
-    raise NotImplementedError  # TODO
+    N = len(X)
+    if shuffle:
+        perm = torch.randperm(N, generator=generator, device=X.device)
+    else:
+        perm = torch.arange(N, device=X.device)
+        
+    for i in range(0, N, batch_size):
+        idx = perm[i:i+batch_size]
+        yield X[idx], y[idx]

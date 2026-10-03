@@ -79,6 +79,8 @@ def write_xlsx(rows: list[dict], template_path: str, out_path: str) -> None:
         for k, v in row_dict.items():
             if k in headers:
                 c_idx = headers[k]
+                if isinstance(v, (list, tuple)):
+                    v = str(v)
                 ws.cell(row=r_idx, column=c_idx, value=v)
                 
     wb.save(out_path)

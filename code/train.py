@@ -206,5 +206,3 @@ def final_eval(cfg: dict, result: dict, data: dict, pred_path: str) -> None:
     
     preds = predict(model, data["X_eval"])
     write_predictions(data["eval_row_id"], preds.cpu().numpy(), pred_path)
-    
-    subprocess.run(["python", "scripts/evaluate.py", "--pred", pred_path])
