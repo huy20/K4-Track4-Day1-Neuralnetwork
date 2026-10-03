@@ -11,38 +11,74 @@ Tên cột của sheet "Experiments" (giữ nguyên, đúng thứ tự mẫu):
 (các cột công thức ở cuối bảng mẫu tự tính, đừng ghi đè)
 """
 from __future__ import annotations
-
 import json
+import os
 from pathlib import Path
-
+import openpyxl
 
 def save_result(result: dict, results_dir: str = "../results") -> str:
-    """Ghi result["cfg"], result["history"], result["summary"] (KHÔNG ghi best_state) ra
-    <results_dir>/<exp_id>.json. Trả về đường dẫn file. Tạo thư mục nếu chưa có."""
-    raise NotImplementedError  # TODO
-
+    Path(results_dir).mkdir(parents=True, exist_ok=True)
+    exp_id = result["cfg"].get("exp_id", "unknown")
+    out_path = os.path.join(results_dir, f"{exp_id}.json")
+    
+    out_data = {
+        "cfg": result["cfg"],
+        "history": result["history"],
+        "summary": result["summary"]
+    }
+    
+    with open(out_path, "w") as f:
+        json.dump(out_data, f, indent=4)
+        
+    return out_path
 
 def load_results(results_dir: str = "../results") -> list[dict]:
-    """Đọc mọi file *.json trong results_dir, trả về danh sách dict (sắp theo exp_id)."""
-    raise NotImplementedError  # TODO
-
+    results = []
+    p = Path(results_dir)
+    if not p.exists(): return results
+    
+    for fpath in sorted(p.glob("*.json")):
+        with open(fpath, "r") as f:
+            data = json.load(f)
+            results.append(data)
+    return results
 
 def to_row(result: dict, eval_scores: dict | None = None, notes: str = "") -> dict:
-    """Biến một kết quả thành một dòng của bảng: gộp cfg + summary (+ eval_acc, eval_macro_f1 nếu có)
-    + figure_file = f"figures/{exp_id}.png". Khoá phải trùng tên cột ở đầu file.
-    Chỉ truyền eval_scores cho baseline và cấu hình cuối cùng."""
-    raise NotImplementedError  # TODO
-
+    row = {}
+    cfg = result["cfg"]
+    summary = result.get("summary", {})
+    
+    for k in cfg: row[k] = cfg[k]
+    for k in summary:
+        if k not in row:
+            row[k] = summary[k]
+            
+    if eval_scores:
+        row["eval_acc"] = eval_scores.get("accuracy")
+        row["eval_macro_f1"] = eval_scores.get("macro_f1")
+    else:
+        row["eval_acc"] = None
+        row["eval_macro_f1"] = None
+        
+    row["figure_file"] = f"figures/{cfg.get('exp_id', 'unknown')}.png"
+    row["notes"] = notes
+    return row
 
 def write_xlsx(rows: list[dict], template_path: str, out_path: str) -> None:
-    """Điền các dòng vào sheet "Experiments" của mẫu, từ dòng 2 trở xuống, rồi lưu thành out_path.
-
-    Các bước (openpyxl):
-      1. wb = openpyxl.load_workbook(template_path)   # KHÔNG dùng data_only=True (sẽ mất công thức)
-      2. ws = wb["Experiments"]; đọc tiêu đề dòng 1 để biết cột nào ứng với khoá nào
-      3. với mỗi row: ghi giá trị vào đúng cột; BỎ QUA các cột công thức (step0_gap_vs_lnC, gap_val_minus_train,
-         delta_val_f1_vs_base, beyond_noise)
-      4. wb.save(out_path)
-    Sau khi lưu, mở file bằng Excel/LibreOffice để các công thức tính lại.
-    """
-    raise NotImplementedError  # TODO
+    wb = openpyxl.load_workbook(template_path)
+    ws = wb["Experiments"]
+    
+    # Read headers from row 1
+    headers = {}
+    for col_idx, cell in enumerate(ws[1], start=1):
+        if cell.value:
+            headers[cell.value] = col_idx
+            
+    # Write data starting from row 2
+    for r_idx, row_dict in enumerate(rows, start=2):
+        for k, v in row_dict.items():
+            if k in headers:
+                c_idx = headers[k]
+                ws.cell(row=r_idx, column=c_idx, value=v)
+                
+    wb.save(out_path)
